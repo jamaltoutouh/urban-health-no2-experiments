@@ -9,28 +9,34 @@ import seaborn as sns
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import os.path
+
 
 from sklearn.preprocessing import MinMaxScaler
-
-
-if len(sys.argv) < 2:
-    print('Error: Output folder prefix is needed')
-    sys.exit(0)
-else:
-    output_folder_prefix = sys.argv[1]
-
 
 
 data_txt = '../data/txt/'
 data_csv = '../data/csv/'
 results_folder = '../data/results/'
-os.mkdir(results_folder+'/'+output_folder_prefix)
 
-dataset = pd.read_csv(data_csv+'sequence_air_all.csv', header=0, index_col=0)
+if len(sys.argv) < 2:
+    print('Error: Output folder prefix is needed')
+    sys.exit(0)
+elif os.path.exists(results_folder+sys.argv[1]):
+    print('Error: Output folder {} already exists'.format(results_folder+sys.argv[1]))
+    sys.exit(0)
+else:
+    output_folder_prefix = sys.argv[1]
+    os.mkdir(results_folder+'/'+output_folder_prefix)
+
+
+dataset = pd.read_csv(data_csv+'035-08-sequence_air_all.csv', header=0, index_col=0)
 
 dataset.replace(-1, dataset.mean())
 
 all_data = dataset['measure'].values.astype(float)
+
+all_data = dataset[(dataset.index >= "2013-12-01") & (dataset.index <= "2019-11-30")]['measure'].values.astype(float)
 
 df_train = dataset[dataset.index < "2017-12-01"]['measure'].to_frame(name='NO2')
 print(df_train.shape)
@@ -65,7 +71,7 @@ def transform_data(arr, seq_len):
 
 from torch.autograd import Variable
 
-seq_len = 100
+seq_len = 72
 
 x_train, y_train = transform_data(train_arr, seq_len)
 x_val, y_val = transform_data(val_arr, seq_len)
@@ -164,8 +170,8 @@ class Optimization:
         y_train,
         x_val=None,
         y_val=None,
-        batch_size=100,
-        n_epochs=15,
+        batch_size=72,
+        n_epochs=0,
         do_teacher_forcing=None,
     ):
         seq_len = x_train.shape[1]
@@ -230,9 +236,15 @@ class Optimization:
                 x_batch = x_batch.to(device)
                 y_batch = y_batch.to(device)
                 y_pred = self.model(x_batch, future=future)
-                y_pred = (
-                    y_pred[:, -len(y_batch) :] if y_pred.shape[1] > y_batch.shape[1] else y_pred
-                )
+                #y_pred = (
+                #    y_pred[:, -len(y_batch) :] if y_pred.shape[1] > y_batch.shape[1] else y_pred
+                #)
+                print(x_batch.shape[1])
+                print(y_batch.shape[1])
+                print(batch)
+                if y_pred.shape[1] > y_batch.shape[1]:
+                    y_pred = y_pred[:, -len(y_batch):]
+
                 loss = self.loss_fn(y_pred, y_batch)
                 test_loss += loss.item()
                 actual += torch.squeeze(y_batch[:, -1]).data.cpu().numpy().tolist()
@@ -298,9 +310,9 @@ loss_fn_2 = nn.MSELoss()
 optimizer_2 = optim.Adam(model_2.parameters(), lr=1e-3)
 scheduler_2 = optim.lr_scheduler.StepLR(optimizer_2, step_size=5, gamma=0.1)
 optimization_2 = Optimization(model_2, loss_fn_2,  optimizer_2, scheduler_2)
-optimization_2.train(x_train, y_train, x_val, y_val, do_teacher_forcing=True)
+optimization_2.train(x_train, y_train, x_val, y_val, batch_size=72, n_epochs=0, do_teacher_forcing=True)
 optimization_2.plot_losses()
-actual_3, predicted_3, test_loss_3 = optimization_2.evaluate(x_val, y_val, batch_size=100, future=5)
+actual_3, predicted_3, test_loss_3 = optimization_2.evaluate(x_val, y_val, batch_size=72, future=5)
 df_result_3 = to_dataframe(actual_3, predicted_3)
 df_result_3 = inverse_transform(scaler, df_result_3, ["actual", "predicted"])
 df_result_3.plot(figsize=(14, 7))
@@ -311,7 +323,7 @@ print("Test PRE-MC loss %.6f" % test_loss_3)
 print("Test PRE-MC diff %.6f" % diff_3)
 
 
-actual_2, predicted_2, test_loss_2 = optimization_2.evaluate(x_test, y_test, batch_size=100, future=5)
+actual_2, predicted_2, test_loss_2 = optimization_2.evaluate(x_test, y_test, batch_size=72, future=5)
 df_result_2 = to_dataframe(actual_2, predicted_2)
 df_result_2 = inverse_transform(scaler, df_result_2, ["actual", "predicted"])
 df_result_2.plot(figsize=(14, 7))
