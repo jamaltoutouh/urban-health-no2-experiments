@@ -76,6 +76,9 @@ trainY = Variable(torch.Tensor(np.array(y_train)))
 testX = Variable(torch.Tensor(np.array(x_test)))
 testY = Variable(torch.Tensor(np.array(y_test)))
 
+valX = Variable(torch.Tensor(np.array(x_val)))
+valY = Variable(torch.Tensor(np.array(y_val)))
+
 
 class LSTM(nn.Module):
 
@@ -109,7 +112,7 @@ class LSTM(nn.Module):
 
         return out
 
-num_epochs = 200
+num_epochs = 100
 learning_rate = 0.01
 
 input_size = 1
@@ -151,15 +154,27 @@ dataY_plot = sc.inverse_transform(dataY_plot)
 print(data_predict)
 print(dataY_plot)
 df_result_2 = to_dataframe(np.squeeze(dataY_plot), np.squeeze(data_predict))
-print(df_result_2)
 df_result_2['difference'] = df_result_2['actual'] - df_result_2['predicted']
-diff_2 = sum(df_result_2['difference'])/len(df_result_2['difference'])
-df_result_2.to_csv('post-MC.csv')
-print("Test Post-MC diff %.6f" % diff_2)
-#plt.axvline(x=training_set.shape[0], c='r', linestyle='--')
+df_result_2['mae'] = abs(df_result_2['actual'] - df_result_2['predicted'])
+df_result_2['mse'] = df_result_2['difference']*df_result_2['difference']
+df_result_2.to_csv('pre-MC.csv')
 
-plt.plot(dataY_plot)
-plt.plot(data_predict)
-plt.suptitle('Time-Series Prediction')
-plt.show()
+lstm.eval()
+train_predict = lstm(valX)
+data_predict = train_predict.data.numpy()
+dataY_plot = valY.data.numpy()
+data_predict = sc.inverse_transform(data_predict)
+dataY_plot = sc.inverse_transform(dataY_plot)
+df_result_3 = to_dataframe(np.squeeze(dataY_plot), np.squeeze(data_predict))
+df_result_3['difference'] = df_result_3['actual'] - df_result_3['predicted']
+df_result_3['mae'] = abs(df_result_3['actual'] - df_result_3['predicted'])
+df_result_3['mse'] = df_result_3['difference'] * df_result_3['difference']
+df_result_3.to_csv('post-MC.csv')
+
+
+
+# plt.plot(dataY_plot)
+# plt.plot(data_predict)
+# plt.suptitle('Time-Series Prediction')
+# plt.show()
 
