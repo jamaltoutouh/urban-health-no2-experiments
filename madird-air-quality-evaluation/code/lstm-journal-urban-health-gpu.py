@@ -20,6 +20,15 @@ output_folder = sys.argv[3]
 output_path = output_folder + '-' + str(hidden_size) + '-' + str(look_back)
 os.mkdir(output_path)
 
+# If we have a GPU available, we'll set our device to GPU. We'll use this device variable later in our code.
+is_cuda = torch.cuda.is_available()
+if is_cuda:
+    device = torch.device("cuda")
+    print("GPU is available")
+else:
+    device = torch.device("cpu")
+    print("GPU not available, CPU used")
+
 
 def to_dataframe(actual, predicted):
     return pd.DataFrame({"actual": actual, "predicted": predicted})
@@ -76,17 +85,17 @@ x_val, y_val = sliding_windows(validating_data, seq_length)
 # train_size = int(len(y) * 0.67)
 # test_size = len(y) - train_size
 #
-dataX = Variable(torch.Tensor(np.array(x)))
-dataY = Variable(torch.Tensor(np.array(y)))
+dataX = Variable(torch.Tensor(np.array(x)).to(device))
+dataY = Variable(torch.Tensor(np.array(y)).to(device))
 
-trainX = Variable(torch.Tensor(np.array(x_train)))
-trainY = Variable(torch.Tensor(np.array(y_train)))
+trainX = Variable(torch.Tensor(np.array(x_train)).to(device))
+trainY = Variable(torch.Tensor(np.array(y_train)).to(device))
 
-testX = Variable(torch.Tensor(np.array(x_test)))
-testY = Variable(torch.Tensor(np.array(y_test)))
+testX = Variable(torch.Tensor(np.array(x_test)).to(device))
+testY = Variable(torch.Tensor(np.array(y_test)).to(device))
 
-valX = Variable(torch.Tensor(np.array(x_val)))
-valY = Variable(torch.Tensor(np.array(y_val)))
+valX = Variable(torch.Tensor(np.array(x_val)).to(device))
+valY = Variable(torch.Tensor(np.array(y_val)).to(device))
 
 
 class LSTM(nn.Module):
@@ -101,31 +110,32 @@ class LSTM(nn.Module):
         self.seq_length = seq_length
 
         self.lstm = nn.LSTM(input_size=input_size, hidden_size=hidden_size,
-                            num_layers=num_layers, batch_first=True)
+                            num_layers=num_layers, batch_first=True).to(device)
 
-        self.fc = nn.Linear(hidden_size, num_classes)
+        self.fc = nn.Linear(hidden_size, num_classes).to(device)
 
     def forward(self, x):
         h_0 = Variable(torch.zeros(
-            self.num_layers, x.size(0), self.hidden_size))
+            self.num_layers, x.size(0), self.hidden_size).to(device))
 
         c_0 = Variable(torch.zeros(
-            self.num_layers, x.size(0), self.hidden_size))
+            self.num_layers, x.size(0), self.hidden_size).to(device))
 
         # Propagate input through LSTM
         ula, (h_out, _) = self.lstm(x, (h_0, c_0))
 
-        h_out = h_out.view(-1, self.hidden_size)
+        h_out = h_out.view(-1, self.hidden_size).to(device)
 
-        out = self.fc(h_out)
+        out = self.fc(h_out).to(device)
 
         return out
 
 
 
 
-num_epochs = 2000
-learning_rate = 0.01
+num_epochs = 50000
+adam_learning_rate = 0.0001
+sgd_learning_rate = 0.01
 
 input_size = 1
 hidden_size = hidden_size
@@ -136,8 +146,15 @@ num_classes = 1
 lstm = LSTM(num_classes, input_size, hidden_size, num_layers)
 
 criterion = torch.nn.MSELoss()  # mean-squared error for regression
-optimizer = torch.optim.Adam(lstm.parameters(), lr=learning_rate)
-# optimizer = torch.optim.SGD(lstm.parameters(), lr=learning_rate)
+optimizer = torch.optim.Adam(lstm.parameters(), lr=adam_learning_rate)
+# optimizer = torch.optim.SGD(lstm.parameters(), lr=sgd_learning_rate)
+
+# To test during the training
+dataY_plot = testY.data.cpu().numpy()
+dataY_plot = sc.inverse_transform(dataY_plot)
+actual_data_test = np.squeeze(dataY_plot)
+test_data_length = len(actual_data_test)
+test_during_training = True
 
 # Train the model
 for epoch in range(num_epochs):
@@ -152,19 +169,26 @@ for epoch in range(num_epochs):
     optimizer.step()
     if epoch % 100 == 0:
         print("Epoch: %d, loss: %1.5f" % (epoch, loss.item()))
+        if epoch % 200 and test_during_training:
+            train_predict = lstm(testX)
+            data_predict = train_predict.data.cpu().numpy()
+            data_predict = sc.inverse_transform(data_predict)
+            #over_predicted_ratio = sum(actual_data_test < np.squeeze(data_predict)) / test_data_length
+            diff = np.squeeze(data_predict) - actual_data_test
+            over_predicted_val = np.sum(diff[diff > 0]) / np.sum(diff > 0)
+            over_predicted_ratio = np.sum(diff > 0) / len(np.squeeze(data_predict))
 
+            print('Epoch: {} - Overpredicted factor: {} - Overpredicted value: {}'.format(epoch, over_predicted_ratio, over_predicted_val))
 
 
 lstm.eval()
 train_predict = lstm(testX)
 
-data_predict = train_predict.data.numpy()
-dataY_plot = testY.data.numpy()
+data_predict = train_predict.data.cpu().numpy()
+dataY_plot = testY.data.cpu().numpy()
 
 data_predict = sc.inverse_transform(data_predict)
 dataY_plot = sc.inverse_transform(dataY_plot)
-print(data_predict)
-print(dataY_plot)
 df_result_2 = to_dataframe(np.squeeze(dataY_plot), np.squeeze(data_predict))
 df_result_2['difference'] = df_result_2['actual'] - df_result_2['predicted']
 df_result_2['mae'] = abs(df_result_2['actual'] - df_result_2['predicted'])
@@ -173,8 +197,8 @@ df_result_2.to_csv(output_path + '/pre-MC.csv')
 
 lstm.eval()
 train_predict = lstm(valX)
-data_predict = train_predict.data.numpy()
-dataY_plot = valY.data.numpy()
+data_predict = train_predict.data.cpu().numpy()
+dataY_plot = valY.data.cpu().numpy()
 data_predict = sc.inverse_transform(data_predict)
 dataY_plot = sc.inverse_transform(dataY_plot)
 df_result_3 = to_dataframe(np.squeeze(dataY_plot), np.squeeze(data_predict))
